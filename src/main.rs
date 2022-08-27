@@ -308,8 +308,6 @@ fn df_sharing_bad(x: f64, y: f64, z: f64) -> [f64; 3] {
 // v' is shared,but eval traverse v' twice!
 // "a linear sized graph unravels to an exponentially larger tree" simonpj
 
-// but wait, is this really true in rust? The Delta type can be a graph (not a tree) in rust I think?
-
 // ok so we need the "monad" type
 // Add/Mul become D<T> -> D<T> -> M<D<T>> where M is used to track the nodes
 // f becomes D<T> -> ... > M<D<T>>
@@ -330,8 +328,43 @@ enum DeltaVar {
 }
 
 #[derive(Debug)]
-struct DualTape {
-    tape: Rc<RefCell<Vec<Rc<DeltaVar>>>>,
+struct Tape {
+    tape: RefCell<Vec<Rc<DeltaVar>>>,
+}
+
+impl Tape {
+    fn new() -> Tape {
+        Tape {
+            tape: RefCell::new(vec![]),
+        }
+    }
+
+    fn push_on_tape(&self, op: Dual<Rc<DeltaVar>>) -> Dual<Rc<DeltaVar>> {
+        let mut tape_vec = self.tape.borrow_mut();
+        let var = Dual {
+            primal: op.primal,
+            tangent: Rc::new(DeltaVar::Var(tape_vec.len())),
+        };
+        tape_vec.push(op.tangent);
+        var
+    }
+
+    fn var(&self, primal: f64) -> DualTape {
+        let var_x = Rc::new(DeltaVar::Var(self.tape.borrow().len()));
+        self.tape.borrow_mut().push(Rc::clone(&var_x));
+        DualTape {
+            tape: self,
+            dual: Dual {
+                primal,
+                tangent: Rc::clone(&var_x),
+            },
+        }
+    }
+}
+
+#[derive(Debug)]
+struct DualTape<'a> {
+    tape: &'a Tape,
     dual: Dual<Rc<DeltaVar>>,
 }
 
@@ -349,32 +382,22 @@ impl VectorSpace for Rc<DeltaVar> {
     }
 }
 
-impl DualTape {
-    fn push_on_tape(&self, op: Dual<Rc<DeltaVar>>) -> Dual<Rc<DeltaVar>> {
-        let mut tape_vec = self.tape.borrow_mut();
-        let var = Dual {
-            primal: op.primal,
-            tangent: Rc::new(DeltaVar::Var(tape_vec.len())),
-        };
-        tape_vec.push(op.tangent);
-        var
-    }
-
+impl<'a> DualTape<'a> {
     // equivalent of deltaLet in Haskell
-    fn delta_push(&self, op: Dual<Rc<DeltaVar>>) -> DualTape {
-        let dual = self.push_on_tape(op);
+    fn delta_push(&self, op: Dual<Rc<DeltaVar>>) -> DualTape<'a> {
+        let dual = self.tape.push_on_tape(op);
         DualTape {
-            tape: Rc::clone(&self.tape),
+            tape: self.tape,
             dual,
         }
     }
 
-    fn add_impl(&self, rhs: &DualTape) -> DualTape {
+    fn add_impl(&self, rhs: &DualTape<'a>) -> DualTape<'a> {
         let op = &self.dual + &rhs.dual;
         self.delta_push(op)
     }
 
-    fn mul_impl(&self, rhs: &DualTape) -> DualTape {
+    fn mul_impl(&self, rhs: &DualTape<'a>) -> DualTape<'a> {
         let op = &self.dual * &rhs.dual;
         self.delta_push(op)
     }
@@ -390,133 +413,114 @@ impl DualTape {
     }
 }
 
-impl Add for DualTape {
-    type Output = DualTape;
+impl<'a> Add for DualTape<'a> {
+    type Output = DualTape<'a>;
 
     fn add(self, rhs: Self) -> Self::Output {
         self.add_impl(&rhs)
     }
 }
 
-impl Add for &DualTape {
-    type Output = DualTape;
+impl<'a> Add for &DualTape<'a> {
+    type Output = DualTape<'a>;
 
     fn add(self, rhs: Self) -> Self::Output {
         self.add_impl(rhs)
     }
 }
 
-impl Add<&DualTape> for DualTape {
-    type Output = DualTape;
+impl<'a> Add<&DualTape<'a>> for DualTape<'a> {
+    type Output = DualTape<'a>;
 
-    fn add(self, rhs: &DualTape) -> Self::Output {
+    fn add(self, rhs: &DualTape<'a>) -> Self::Output {
         self.add_impl(rhs)
     }
 }
 
-impl Add<DualTape> for &DualTape {
-    type Output = DualTape;
+impl<'a> Add<DualTape<'a>> for &DualTape<'a> {
+    type Output = DualTape<'a>;
 
-    fn add(self, rhs: DualTape) -> Self::Output {
+    fn add(self, rhs: DualTape<'a>) -> Self::Output {
         self.add_impl(&rhs)
     }
 }
 
-impl Mul for DualTape {
-    type Output = DualTape;
+impl<'a> Mul for DualTape<'a> {
+    type Output = DualTape<'a>;
 
     fn mul(self, rhs: Self) -> Self::Output {
         self.mul_impl(&rhs)
     }
 }
 
-impl Mul for &DualTape {
-    type Output = DualTape;
+impl<'a> Mul for &DualTape<'a> {
+    type Output = DualTape<'a>;
 
     fn mul(self, rhs: Self) -> Self::Output {
         self.mul_impl(rhs)
     }
 }
 
-impl Mul<&DualTape> for DualTape {
-    type Output = DualTape;
+impl<'a> Mul<&DualTape<'a>> for DualTape<'a> {
+    type Output = DualTape<'a>;
 
-    fn mul(self, rhs: &DualTape) -> Self::Output {
+    fn mul(self, rhs: &DualTape<'a>) -> Self::Output {
         self.mul_impl(rhs)
     }
 }
 
-impl Mul<DualTape> for &DualTape {
-    type Output = DualTape;
+impl<'a> Mul<DualTape<'a>> for &DualTape<'a> {
+    type Output = DualTape<'a>;
 
-    fn mul(self, rhs: DualTape) -> Self::Output {
+    fn mul(self, rhs: DualTape<'a>) -> Self::Output {
         self.mul_impl(&rhs)
     }
 }
 
-fn eval_inner(x: f64, deltavar: &DeltaVar, result: &mut Vec<f64>) {
+fn eval_deltavar(x: f64, deltavar: &DeltaVar, result: &mut Vec<f64>) {
     match *deltavar {
         DeltaVar::Zero => (),
         DeltaVar::Var(idx) => result[idx] += x,
-        DeltaVar::Scale(factor, ref d2) => eval_inner(x * factor, d2, result),
+        DeltaVar::Scale(factor, ref d2) => eval_deltavar(x * factor, d2, result),
         DeltaVar::Add(ref l, ref r) => {
-            eval_inner(x, l, result);
-            eval_inner(x, r, result);
+            eval_deltavar(x, l, result);
+            eval_deltavar(x, r, result);
         }
     }
 }
 
-fn eval(inputs: usize, dual_tape: DualTape, result: &mut Vec<f64>) {
-    let mut tape = dual_tape.tape.borrow_mut();
+fn eval(inputs: usize, dual_tape: DualTape) -> Vec<f64> {
+    // this would be better as a map - we only use the input vars and a small
+    // amount of intermediate vars (see also where in the call to eval_deltavar
+    // where result is pop'ed.)
+    let mut result = vec![0.0; dual_tape.tape.tape.borrow().len()];
+    let mut tape = dual_tape.tape.tape.borrow_mut();
     // first seed the output type with 1.0 - this value is backpropagated
-    eval_inner(1.0, &dual_tape.dual.tangent, result);
+    eval_deltavar(1.0, &dual_tape.dual.tangent, &mut result);
     // now backpropagate by popping the tape - i.e. iterate in reverse
     while tape.len() > inputs {
         let deltavar = tape.pop().unwrap();
         let idx = tape.len();
         if result[idx] != 0.0 {
-            eval_inner(result[idx], &deltavar, result)
+            eval_deltavar(result.pop().unwrap(), &deltavar, &mut result)
         }
     }
+    result
 }
 
-fn f_sharing(x: &DualTape, y: &DualTape, z: &DualTape) -> DualTape {
+fn f_sharing<'a>(x: &DualTape<'a>, y: &DualTape<'a>, z: &DualTape<'a>) -> DualTape<'a> {
     let ref r = x * y + z * x;
     r + r.cos() + r.sin()
 }
 
 fn df_sharing(x: f64, y: f64, z: f64) -> Vec<f64> {
-    let tape = Rc::new(RefCell::new(vec![
-        Rc::new(DeltaVar::Var(0)),
-        Rc::new(DeltaVar::Var(1)),
-        Rc::new(DeltaVar::Var(2)),
-    ]));
-    let x = &DualTape {
-        tape: Rc::clone(&tape),
-        dual: Dual {
-            primal: x,
-            tangent: Rc::clone(tape.borrow().get(0).unwrap()),
-        },
-    };
-    let y = &DualTape {
-        tape: Rc::clone(&tape),
-        dual: Dual {
-            primal: y,
-            tangent: Rc::clone(tape.borrow().get(1).unwrap()),
-        },
-    };
-    let z = &DualTape {
-        tape: Rc::clone(&tape),
-        dual: Dual {
-            primal: z,
-            tangent: Rc::clone(tape.borrow().get(2).unwrap()),
-        },
-    };
+    let tape = Tape::new();
+    let x = &tape.var(x);
+    let y = &tape.var(y);
+    let z = &tape.var(z);
     let dual_tape = f_sharing(x, y, z);
     // println!("{dual_tape:?}");
-    let mut res = vec![0.0; dual_tape.tape.borrow().len()];
-    eval(3, dual_tape, &mut res);
-    res
+    eval(3, dual_tape)
 }
 
 fn main() {
