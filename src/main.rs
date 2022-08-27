@@ -1,4 +1,5 @@
 #![allow(clippy::toplevel_ref_arg)]
+#![deny(clippy::pedantic)]
 
 use std::{
     cell::RefCell,
@@ -203,7 +204,7 @@ impl<T: Copy + VectorSpace, const N: usize> VectorSpace for [T; N] {
     fn add(&self, rhs: &Self) -> Self {
         let mut result = [T::zero(); N];
         for (i, (l, r)) in self.iter().zip(rhs).enumerate() {
-            result[i] = l.add(r)
+            result[i] = l.add(r);
         }
         result
     }
@@ -211,7 +212,7 @@ impl<T: Copy + VectorSpace, const N: usize> VectorSpace for [T; N] {
     fn scale(&self, factor: f64) -> Self {
         let mut result = [T::zero(); N];
         for (i, v) in self.iter().enumerate() {
-            result[i] = v.scale(factor)
+            result[i] = v.scale(factor);
         }
         result
     }
@@ -257,7 +258,7 @@ fn eval_delta<const N: usize>(x: f64, delta: &Delta, result: &mut [f64; N]) {
         Delta::Scale(factor, ref d2) => eval_delta(x * factor, d2, result),
         Delta::Add(ref l, ref r) => {
             eval_delta(x, l, result);
-            eval_delta(x, r, result)
+            eval_delta(x, r, result);
         }
     }
 }
@@ -489,7 +490,7 @@ fn eval_deltavar(x: f64, deltavar: &DeltaVar, result: &mut Vec<f64>) {
     }
 }
 
-fn eval(inputs: usize, dual_tape: DualTape) -> Vec<f64> {
+fn eval(inputs: usize, dual_tape: &DualTape) -> Vec<f64> {
     // this would be better as a map - we only use the input vars and a small
     // amount of intermediate vars (see also where in the call to eval_deltavar
     // where result is pop'ed.)
@@ -502,7 +503,7 @@ fn eval(inputs: usize, dual_tape: DualTape) -> Vec<f64> {
         let deltavar = tape.pop().unwrap();
         let idx = tape.len();
         if result[idx] != 0.0 {
-            eval_deltavar(result.pop().unwrap(), &deltavar, &mut result)
+            eval_deltavar(result.pop().unwrap(), &deltavar, &mut result);
         }
     }
     result
@@ -520,7 +521,7 @@ fn df_sharing(x: f64, y: f64, z: f64) -> Vec<f64> {
     let z = &tape.var(z);
     let dual_tape = f_sharing(x, y, z);
     // println!("{dual_tape:?}");
-    eval(3, dual_tape)
+    eval(3, &dual_tape)
 }
 
 fn main() {
@@ -553,5 +554,5 @@ fn main() {
     println!("{res:?}");
 
     let res = df_sharing(1.0, 2.0, 3.0);
-    print!("{res:?}")
+    print!("{res:?}");
 }
