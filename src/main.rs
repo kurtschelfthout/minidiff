@@ -1,5 +1,6 @@
 #![allow(clippy::toplevel_ref_arg)]
 #![deny(clippy::pedantic)]
+mod playground;
 
 use std::{
     cell::RefCell,
@@ -7,6 +8,14 @@ use std::{
     ops::{Add, Mul},
     rc::Rc,
 };
+
+// fn f(t: f64) -> f64 {
+//     t.powi(2) + t + 1.0
+// }
+
+// fn df(t: f64) -> f64 {
+//     2.0 * t + 1.0
+// }
 
 #[derive(Debug)]
 struct Dual<T> {
@@ -29,27 +38,6 @@ trait VectorSpace {
     fn scale(&self, factor: f64) -> Self;
 }
 
-impl<T: VectorSpace> Dual<T> {
-    fn constant(primal: f64) -> Self {
-        Dual {
-            primal,
-            tangent: T::zero(),
-        }
-    }
-
-    fn new(primal: f64, tangent: T) -> Self {
-        Dual { primal, tangent }
-    }
-
-    fn sin(&self) -> Self {
-        Dual::new(self.primal.sin(), self.tangent.scale(self.primal.cos()))
-    }
-
-    fn cos(&self) -> Self {
-        Dual::new(self.primal.cos(), self.tangent.scale(-self.primal.sin()))
-    }
-}
-
 impl VectorSpace for f64 {
     fn zero() -> Self {
         0.0
@@ -64,29 +52,73 @@ impl VectorSpace for f64 {
     }
 }
 
-// could do this instead - but using the vectorspace will work out better later
-// impl D<f64> {
-//     fn constant(value: f64) -> Self {
-//         D {
-//             reg: value,
-//             deriv: 0.0,
-//         }
-//     }
-
-//     fn sin(self) -> Self {
-//         D {
-//             reg: self.reg.sin(),
-//             deriv: self.deriv * self.reg.cos(),
-//         }
-//     }
-// }
-
-// All four combinations of Forward + &Forward for ergonomics
 impl<T: VectorSpace> Dual<T> {
+    fn constant(primal: f64) -> Self {
+        Dual {
+            primal,
+            tangent: T::zero(),
+        }
+    }
+
+    fn new(primal: f64, tangent: T) -> Self {
+        Dual { primal, tangent }
+    }
+
+    fn chain(&self, primal: f64, factor: f64) -> Self {
+        Dual::new(primal, self.tangent.scale(factor))
+    }
+
+    fn sin(&self) -> Self {
+        self.chain(self.primal.sin(), self.primal.cos())
+    }
+
+    fn cos(&self) -> Self {
+        self.chain(self.primal.cos(), -self.primal.sin())
+    }
+
+    fn powi(&self, n: i32) -> Self {
+        self.chain(self.primal.powi(n), f64::from(n) * self.primal.powi(n - 1))
+    }
+
     fn add_impl(&self, rhs: &Dual<T>) -> Dual<T> {
         Dual::new(self.primal + rhs.primal, self.tangent.add(&rhs.tangent))
     }
+
+    fn mul_impl(&self, rhs: &Dual<T>) -> Dual<T> {
+        Dual::new(
+            self.primal * rhs.primal,
+            rhs.tangent
+                .scale(self.primal)
+                .add(&self.tangent.scale(rhs.primal)),
+        )
+    }
 }
+
+// could do this instead - but using the vectorspace will work out better later
+// impl Dual<f64> {
+//     fn constanti(value: f64) -> Self {
+//         Dual {
+//             primal: value,
+//             tangent: 0.0,
+//         }
+//     }
+
+//     fn powi(self, exp: i32) -> Self {
+//         Dual {
+//             primal: self.primal.powi(exp),
+//             tangent: f64::from(exp) * self.primal.powi(exp - 1) * self.tangent,
+//         }
+//     }
+
+// fn sin(self) -> Self {
+//     D {
+//         reg: self.reg.sin(),
+//         deriv: self.deriv * self.reg.cos(),
+//     }
+// }
+// }
+
+// All four combinations of Forward + &Forward for ergonomics
 
 impl<T: VectorSpace> Add for Dual<T> {
     type Output = Dual<T>;
@@ -117,17 +149,6 @@ impl<T: VectorSpace> Add<Dual<T>> for &Dual<T> {
 
     fn add(self, rhs: Dual<T>) -> Self::Output {
         self.add_impl(&rhs)
-    }
-}
-
-impl<T: VectorSpace> Dual<T> {
-    fn mul_impl(&self, rhs: &Dual<T>) -> Dual<T> {
-        Dual::new(
-            self.primal * rhs.primal,
-            rhs.tangent
-                .scale(self.primal)
-                .add(&self.tangent.scale(rhs.primal)),
-        )
     }
 }
 
@@ -163,14 +184,15 @@ impl<T: VectorSpace> Mul<Dual<T>> for &Dual<T> {
     }
 }
 
-fn f<T: VectorSpace>(x: &Dual<T>) -> Dual<T> {
-    let ref y = x.sin() * x;
-    y.cos() + x * Dual::constant(10.0) + y * x.cos()
+fn f<T: VectorSpace>(t: &Dual<T>) -> Dual<T> {
+    t.powi(2) + t + Dual::constant(1.0)
+    // let ref y = x.sin() * x;
+    // y.cos() + x * Dual::constant(10.0) + y * x.cos()
 }
 
 //wrapper
-fn df(x: f64) -> f64 {
-    let res = f(&Dual::new(x, 1.0));
+fn df(t: f64) -> f64 {
+    let res = f(&Dual::new(t, 1.0));
     res.tangent
 }
 
@@ -178,6 +200,11 @@ fn df(x: f64) -> f64 {
 fn f_2out<T: VectorSpace>(x: &Dual<T>) -> (Dual<T>, Dual<T>) {
     let ref y = x.sin() * x.sin();
     (y + x * Dual::constant(10.0), x + y * Dual::constant(20.0))
+}
+
+fn df_2out<T: VectorSpace>(x: f64) -> (f64, f64) {
+    let (dx1, dx2) = f_2out(&Dual::new(x, 1.0));
+    (dx1.tangent, dx2.tangent)
 }
 
 //multiple inputs: bad - evaluates function multiple times!
@@ -192,7 +219,21 @@ fn df_3in_v1(x: f64, y: f64, z: f64) -> (f64, f64, f64) {
     (r1.tangent, r2.tangent, r3.tangent)
 }
 
-// maybe also show full jacobian?
+// "full jacobian"
+fn f_3in3out<T: VectorSpace>(x: &Dual<T>, y: &Dual<T>, z: &Dual<T>) -> (Dual<T>, Dual<T>, Dual<T>) {
+    (x * y, x * z, y * z)
+}
+
+fn df_3in3out(x: f64, y: f64, z: f64) -> ((f64, f64, f64), (f64, f64, f64), (f64, f64, f64)) {
+    let (r11, r12, r13) = f_3in3out(&Dual::new(x, 1.0), &Dual::constant(y), &Dual::constant(z));
+    let (r21, r22, r23) = f_3in3out(&Dual::constant(x), &Dual::new(y, 1.0), &Dual::constant(z));
+    let (r31, r32, r33) = f_3in3out(&Dual::constant(x), &Dual::constant(y), &Dual::new(z, 1.0));
+    (
+        (r11.tangent, r12.tangent, r13.tangent),
+        (r21.tangent, r22.tangent, r23.tangent),
+        (r31.tangent, r32.tangent, r33.tangent),
+    )
+}
 
 // multiple inputs - fix 1 - tupling
 // note: copy here is necessary to allow the [T::zero(); N]
@@ -251,14 +292,14 @@ impl VectorSpace for Rc<Delta> {
     }
 }
 
-fn eval_delta<const N: usize>(x: f64, delta: &Delta, result: &mut [f64; N]) {
+fn eval_delta<const N: usize>(scale_acc: f64, delta: &Delta, result: &mut [f64; N]) {
     match *delta {
         Delta::Zero => (),
-        Delta::OneHot(i) => result[i] += x,
-        Delta::Scale(factor, ref d2) => eval_delta(x * factor, d2, result),
+        Delta::OneHot(i) => result[i] += scale_acc,
+        Delta::Scale(factor, ref d2) => eval_delta(scale_acc * factor, d2, result),
         Delta::Add(ref l, ref r) => {
-            eval_delta(x, l, result);
-            eval_delta(x, r, result);
+            eval_delta(scale_acc, l, result);
+            eval_delta(scale_acc, r, result);
         }
     }
 }
@@ -525,6 +566,8 @@ fn df_sharing(x: f64, y: f64, z: f64) -> Vec<f64> {
 }
 
 fn main() {
+    playground::main();
+
     let res = f(&Dual::new(10.0, 1.0));
     println!("{res:?}");
 
