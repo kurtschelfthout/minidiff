@@ -1,5 +1,4 @@
 #![allow(clippy::toplevel_ref_arg)]
-#![deny(clippy::pedantic)]
 mod playground;
 
 use std::{
