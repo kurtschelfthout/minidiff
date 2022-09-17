@@ -2,19 +2,13 @@
 mod playground;
 
 use std::{
-    cell::RefCell,
+    cell::{RefCell, RefMut},
     fmt::Display,
     ops::{Add, Mul},
     rc::Rc,
 };
 
-// fn f(t: f64) -> f64 {
-//     t.powi(2) + t + 1.0
-// }
-
-// fn df(t: f64) -> f64 {
-//     2.0 * t + 1.0
-// }
+// ------- Step 1: Dual<T> for T=f64 -----------
 
 #[derive(Debug)]
 struct Dual<T> {
@@ -93,31 +87,7 @@ impl<T: VectorSpace> Dual<T> {
     }
 }
 
-// could do this instead - but using the vectorspace will work out better later
-// impl Dual<f64> {
-//     fn constanti(value: f64) -> Self {
-//         Dual {
-//             primal: value,
-//             tangent: 0.0,
-//         }
-//     }
-
-//     fn powi(self, exp: i32) -> Self {
-//         Dual {
-//             primal: self.primal.powi(exp),
-//             tangent: f64::from(exp) * self.primal.powi(exp - 1) * self.tangent,
-//         }
-//     }
-
-// fn sin(self) -> Self {
-//     D {
-//         reg: self.reg.sin(),
-//         deriv: self.deriv * self.reg.cos(),
-//     }
-// }
-// }
-
-// All four combinations of Forward + &Forward for ergonomics
+// All four combinations of Dual + &Dual for ergonomics
 
 impl<T: VectorSpace> Add for Dual<T> {
     type Output = Dual<T>;
@@ -185,8 +155,6 @@ impl<T: VectorSpace> Mul<Dual<T>> for &Dual<T> {
 
 fn f<T: VectorSpace>(t: &Dual<T>) -> Dual<T> {
     t.powi(2) + t + Dual::constant(1.0)
-    // let ref y = x.sin() * x;
-    // y.cos() + x * Dual::constant(10.0) + y * x.cos()
 }
 
 //wrapper
@@ -196,14 +164,15 @@ fn df(t: f64) -> f64 {
 }
 
 //mulitple outputs - works nicely
-fn f_2out<T: VectorSpace>(x: &Dual<T>) -> (Dual<T>, Dual<T>) {
-    let ref y = x.sin() * x.sin();
-    (y + x * Dual::constant(10.0), x + y * Dual::constant(20.0))
+fn f_2out<T: VectorSpace>(t: &Dual<T>) -> (Dual<T>, Dual<T>) {
+    let x = t.powi(2) + t + Dual::constant(1.0);
+    let y = t.powi(2) + Dual::constant(3.0) * t + Dual::constant(2.0);
+    (x, y)
 }
 
-fn df_2out<T: VectorSpace>(x: f64) -> (f64, f64) {
-    let (dx1, dx2) = f_2out(&Dual::new(x, 1.0));
-    (dx1.tangent, dx2.tangent)
+fn df_2out(x: f64) -> (f64, f64) {
+    let (dx, dy) = f_2out(&Dual::new(x, 1.0));
+    (dx.tangent, dy.tangent)
 }
 
 //multiple inputs: bad - evaluates function multiple times!
@@ -219,22 +188,23 @@ fn df_3in_v1(x: f64, y: f64, z: f64) -> (f64, f64, f64) {
 }
 
 // "full jacobian"
-fn f_3in3out<T: VectorSpace>(x: &Dual<T>, y: &Dual<T>, z: &Dual<T>) -> (Dual<T>, Dual<T>, Dual<T>) {
-    (x * y, x * z, y * z)
-}
+// fn f_3in3out<T: VectorSpace>(x: &Dual<T>, y: &Dual<T>, z: &Dual<T>) -> (Dual<T>, Dual<T>, Dual<T>) {
+//     (x * y, x * z, y * z)
+// }
 
-fn df_3in3out(x: f64, y: f64, z: f64) -> ((f64, f64, f64), (f64, f64, f64), (f64, f64, f64)) {
-    let (r11, r12, r13) = f_3in3out(&Dual::new(x, 1.0), &Dual::constant(y), &Dual::constant(z));
-    let (r21, r22, r23) = f_3in3out(&Dual::constant(x), &Dual::new(y, 1.0), &Dual::constant(z));
-    let (r31, r32, r33) = f_3in3out(&Dual::constant(x), &Dual::constant(y), &Dual::new(z, 1.0));
-    (
-        (r11.tangent, r12.tangent, r13.tangent),
-        (r21.tangent, r22.tangent, r23.tangent),
-        (r31.tangent, r32.tangent, r33.tangent),
-    )
-}
+// fn df_3in3out(x: f64, y: f64, z: f64) -> ((f64, f64, f64), (f64, f64, f64), (f64, f64, f64)) {
+//     let (r11, r12, r13) = f_3in3out(&Dual::new(x, 1.0), &Dual::constant(y), &Dual::constant(z));
+//     let (r21, r22, r23) = f_3in3out(&Dual::constant(x), &Dual::new(y, 1.0), &Dual::constant(z));
+//     let (r31, r32, r33) = f_3in3out(&Dual::constant(x), &Dual::constant(y), &Dual::new(z, 1.0));
+//     (
+//         (r11.tangent, r12.tangent, r13.tangent),
+//         (r21.tangent, r22.tangent, r23.tangent),
+//         (r31.tangent, r32.tangent, r33.tangent),
+//     )
+// }
 
-// multiple inputs - fix 1 - tupling
+// ------- Step 2: Dual<T> for T=Vec<f64> -----------
+
 // note: copy here is necessary to allow the [T::zero(); N]
 impl<T: Copy + VectorSpace, const N: usize> VectorSpace for [T; N] {
     fn zero() -> Self {
@@ -268,11 +238,12 @@ fn df_3in_v2(x: f64, y: f64, z: f64) -> [f64; 3] {
     r.tangent
 }
 
-// fix 2: introduce deltas
+// ------- Step 3: Dual<T> for T=Delta -----------
+
 #[derive(Debug)]
 enum Delta {
     Zero,
-    OneHot(usize),
+    Var(usize),
     Scale(f64, Rc<Delta>),
     Add(Rc<Delta>, Rc<Delta>),
 }
@@ -291,10 +262,10 @@ impl VectorSpace for Rc<Delta> {
     }
 }
 
-fn eval_delta<const N: usize>(scale_acc: f64, delta: &Delta, result: &mut [f64; N]) {
+fn eval_delta(scale_acc: f64, delta: &Delta, result: &mut Vec<f64>) {
     match *delta {
         Delta::Zero => (),
-        Delta::OneHot(i) => result[i] += scale_acc,
+        Delta::Var(i) => result[i] += scale_acc,
         Delta::Scale(factor, ref d2) => eval_delta(scale_acc * factor, d2, result),
         Delta::Add(ref l, ref r) => {
             eval_delta(scale_acc, l, result);
@@ -303,98 +274,62 @@ fn eval_delta<const N: usize>(scale_acc: f64, delta: &Delta, result: &mut [f64; 
     }
 }
 
-fn df_3in_v3(x: f64, y: f64, z: f64) -> [f64; 3] {
+fn df_3in_v3(x: f64, y: f64, z: f64) -> Vec<f64> {
     let r = f_3in(
-        &Dual::new(x, Rc::new(Delta::OneHot(0))),
-        &Dual::new(y, Rc::new(Delta::OneHot(1))),
-        &Dual::new(z, Rc::new(Delta::OneHot(2))),
+        &Dual::new(x, Rc::new(Delta::Var(0))),
+        &Dual::new(y, Rc::new(Delta::Var(1))),
+        &Dual::new(z, Rc::new(Delta::Var(2))),
     );
-    let mut result = [0.0, 0.0, 0.0];
+    let mut result = vec![0.0, 0.0, 0.0];
     eval_delta(1.0, &r.tangent, &mut result);
     result
 }
 
-// now note that we can do this evaluation both "forward" and "backward"
-// and the "backward" evaluation above just transpires through the accumulators.
-// is the equivalent "forward" eval maybe:
-// Z -> [0,0,0]
-// OH 1 -> [0,1,0]
-// Sc(f,d) -> f * eval(d)
-// Add(l,r) -> eval(l) + eval(r)
-// which _still_ allocates a onehot vector for every input!
-//  So where does the reverse in reverse-mode AD come from?
-// it's all in the eval above?
-// To work this out see what happens with a a 2 input - 2 output function
-// do both forward and reverse AD and see where things happen?
+// ------- Step 4: DualTrace<T> for T=Delta -----------
 
-// A last problem with this approach is that it doesn't take into account
-// sharing. E.g. a program like:
 fn f_sharing_bad<T: VectorSpace>(x: &Dual<T>, y: &Dual<T>, z: &Dual<T>) -> Dual<T> {
     let ref y = x.sin() * y.sin() * z * z; // some big rhs
     y + y
 }
 
-fn df_sharing_bad(x: f64, y: f64, z: f64) -> [f64; 3] {
+fn df_sharing_bad(x: f64, y: f64, z: f64) -> Vec<f64> {
     let r = f_sharing_bad(
-        &Dual::new(x, Rc::new(Delta::OneHot(0))),
-        &Dual::new(y, Rc::new(Delta::OneHot(1))),
-        &Dual::new(z, Rc::new(Delta::OneHot(2))),
+        &Dual::new(x, Rc::new(Delta::Var(0))),
+        &Dual::new(y, Rc::new(Delta::Var(1))),
+        &Dual::new(z, Rc::new(Delta::Var(2))),
     );
-    let mut result = [0.0, 0.0, 0.0];
+    let mut result = vec![0.0, 0.0, 0.0];
     eval_delta(1.0, &r.tangent, &mut result);
     result
 }
 
-//if y = D v v' then y+y will result in a D (v+v) Add(v',v')
-// v' is shared,but eval traverse v' twice!
-// "a linear sized graph unravels to an exponentially larger tree" simonpj
-
-// ok so we need the "monad" type
-// Add/Mul become D<T> -> D<T> -> M<D<T>> where M is used to track the nodes
-// f becomes D<T> -> ... > M<D<T>>
-
-// since we don't have monads in rust, and anyway we'd prefer not to do the
-// monadic source transformation, especially without do notation, let's try something else.
-// all we really want is a "tape" - a record of the operations that have been executed
-// so that we can aggregate the changes in reverse. The Let var = l in r setup simply creates
-// that type as a linked list. But what if we change our D<T> to hold a normal vec, and just append
-// every operation?
-
 #[derive(Debug)]
-enum DeltaVar {
-    Zero,
-    Var(usize),
-    Scale(f64, Rc<DeltaVar>),
-    Add(Rc<DeltaVar>, Rc<DeltaVar>),
+struct Trace {
+    trace: RefCell<Vec<Rc<Delta>>>,
 }
 
-#[derive(Debug)]
-struct Tape {
-    tape: RefCell<Vec<Rc<DeltaVar>>>,
-}
-
-impl Tape {
-    fn new() -> Tape {
-        Tape {
-            tape: RefCell::new(vec![]),
+impl Trace {
+    fn new() -> Trace {
+        Trace {
+            trace: RefCell::new(vec![]),
         }
     }
 
-    fn push_on_tape(&self, op: Dual<Rc<DeltaVar>>) -> Dual<Rc<DeltaVar>> {
-        let mut tape_vec = self.tape.borrow_mut();
+    fn push(&self, op: Dual<Rc<Delta>>) -> Dual<Rc<Delta>> {
+        let mut trace = self.trace.borrow_mut();
         let var = Dual {
             primal: op.primal,
-            tangent: Rc::new(DeltaVar::Var(tape_vec.len())),
+            tangent: Rc::new(Delta::Var(trace.len())),
         };
-        tape_vec.push(op.tangent);
+        trace.push(op.tangent);
         var
     }
 
-    fn var(&self, primal: f64) -> DualTape {
-        let var_x = Rc::new(DeltaVar::Var(self.tape.borrow().len()));
-        self.tape.borrow_mut().push(Rc::clone(&var_x));
-        DualTape {
-            tape: self,
+    fn var(&self, primal: f64) -> DualTrace {
+        let var_x = Rc::new(Delta::Var(self.trace.borrow().len()));
+        self.trace.borrow_mut().push(Rc::clone(&var_x));
+        DualTrace {
+            trace: self,
             dual: Dual {
                 primal,
                 tangent: Rc::clone(&var_x),
@@ -404,41 +339,35 @@ impl Tape {
 }
 
 #[derive(Debug)]
-struct DualTape<'a> {
-    tape: &'a Tape,
-    dual: Dual<Rc<DeltaVar>>,
+struct DualTrace<'a> {
+    trace: &'a Trace,
+    dual: Dual<Rc<Delta>>,
 }
 
-impl VectorSpace for Rc<DeltaVar> {
-    fn zero() -> Self {
-        Rc::new(DeltaVar::Zero)
+impl<'a> DualTrace<'a> {
+    fn trace_len(&self) -> usize {
+        self.trace.trace.borrow().len()
     }
 
-    fn add(&self, rhs: &Self) -> Self {
-        Rc::new(DeltaVar::Add(Rc::clone(self), Rc::clone(rhs)))
+    fn trace_mut(&self) -> RefMut<Vec<Rc<Delta>>> {
+        self.trace.trace.borrow_mut()
     }
 
-    fn scale(&self, factor: f64) -> Self {
-        Rc::new(DeltaVar::Scale(factor, Rc::clone(self)))
-    }
-}
-
-impl<'a> DualTape<'a> {
     // equivalent of deltaLet in Haskell
-    fn delta_push(&self, op: Dual<Rc<DeltaVar>>) -> DualTape<'a> {
-        let dual = self.tape.push_on_tape(op);
-        DualTape {
-            tape: self.tape,
+    fn delta_push(&self, op: Dual<Rc<Delta>>) -> DualTrace<'a> {
+        let dual = self.trace.push(op);
+        DualTrace {
+            trace: self.trace,
             dual,
         }
     }
 
-    fn add_impl(&self, rhs: &DualTape<'a>) -> DualTape<'a> {
+    fn add_impl(&self, rhs: &DualTrace<'a>) -> DualTrace<'a> {
         let op = &self.dual + &rhs.dual;
         self.delta_push(op)
     }
 
-    fn mul_impl(&self, rhs: &DualTape<'a>) -> DualTape<'a> {
+    fn mul_impl(&self, rhs: &DualTrace<'a>) -> DualTrace<'a> {
         let op = &self.dual * &rhs.dual;
         self.delta_push(op)
     }
@@ -454,114 +383,154 @@ impl<'a> DualTape<'a> {
     }
 }
 
-impl<'a> Add for DualTape<'a> {
-    type Output = DualTape<'a>;
+impl<'a> Add for DualTrace<'a> {
+    type Output = DualTrace<'a>;
 
     fn add(self, rhs: Self) -> Self::Output {
         self.add_impl(&rhs)
     }
 }
 
-impl<'a> Add for &DualTape<'a> {
-    type Output = DualTape<'a>;
+impl<'a> Add for &DualTrace<'a> {
+    type Output = DualTrace<'a>;
 
     fn add(self, rhs: Self) -> Self::Output {
         self.add_impl(rhs)
     }
 }
 
-impl<'a> Add<&DualTape<'a>> for DualTape<'a> {
-    type Output = DualTape<'a>;
+impl<'a> Add<&DualTrace<'a>> for DualTrace<'a> {
+    type Output = DualTrace<'a>;
 
-    fn add(self, rhs: &DualTape<'a>) -> Self::Output {
+    fn add(self, rhs: &DualTrace<'a>) -> Self::Output {
         self.add_impl(rhs)
     }
 }
 
-impl<'a> Add<DualTape<'a>> for &DualTape<'a> {
-    type Output = DualTape<'a>;
+impl<'a> Add<DualTrace<'a>> for &DualTrace<'a> {
+    type Output = DualTrace<'a>;
 
-    fn add(self, rhs: DualTape<'a>) -> Self::Output {
+    fn add(self, rhs: DualTrace<'a>) -> Self::Output {
         self.add_impl(&rhs)
     }
 }
 
-impl<'a> Mul for DualTape<'a> {
-    type Output = DualTape<'a>;
+impl<'a> Mul for DualTrace<'a> {
+    type Output = DualTrace<'a>;
 
     fn mul(self, rhs: Self) -> Self::Output {
         self.mul_impl(&rhs)
     }
 }
 
-impl<'a> Mul for &DualTape<'a> {
-    type Output = DualTape<'a>;
+impl<'a> Mul for &DualTrace<'a> {
+    type Output = DualTrace<'a>;
 
     fn mul(self, rhs: Self) -> Self::Output {
         self.mul_impl(rhs)
     }
 }
 
-impl<'a> Mul<&DualTape<'a>> for DualTape<'a> {
-    type Output = DualTape<'a>;
+impl<'a> Mul<&DualTrace<'a>> for DualTrace<'a> {
+    type Output = DualTrace<'a>;
 
-    fn mul(self, rhs: &DualTape<'a>) -> Self::Output {
+    fn mul(self, rhs: &DualTrace<'a>) -> Self::Output {
         self.mul_impl(rhs)
     }
 }
 
-impl<'a> Mul<DualTape<'a>> for &DualTape<'a> {
-    type Output = DualTape<'a>;
+impl<'a> Mul<DualTrace<'a>> for &DualTrace<'a> {
+    type Output = DualTrace<'a>;
 
-    fn mul(self, rhs: DualTape<'a>) -> Self::Output {
+    fn mul(self, rhs: DualTrace<'a>) -> Self::Output {
         self.mul_impl(&rhs)
     }
 }
 
-fn eval_deltavar(x: f64, deltavar: &DeltaVar, result: &mut Vec<f64>) {
-    match *deltavar {
-        DeltaVar::Zero => (),
-        DeltaVar::Var(idx) => result[idx] += x,
-        DeltaVar::Scale(factor, ref d2) => eval_deltavar(x * factor, d2, result),
-        DeltaVar::Add(ref l, ref r) => {
-            eval_deltavar(x, l, result);
-            eval_deltavar(x, r, result);
-        }
-    }
-}
-
-fn eval(inputs: usize, dual_tape: &DualTape) -> Vec<f64> {
+fn eval(inputs: usize, dual_trace: &DualTrace) -> Vec<f64> {
     // this would be better as a map - we only use the input vars and a small
-    // amount of intermediate vars (see also where in the call to eval_deltavar
+    // amount of intermediate vars (see also where in the call to eval_delta_vec
     // where result is pop'ed.)
-    let mut result = vec![0.0; dual_tape.tape.tape.borrow().len()];
-    let mut tape = dual_tape.tape.tape.borrow_mut();
+    let mut result = vec![0.0; dual_trace.trace_len()];
+    let mut trace = dual_trace.trace_mut();
     // first seed the output type with 1.0 - this value is backpropagated
-    eval_deltavar(1.0, &dual_tape.dual.tangent, &mut result);
-    // now backpropagate by popping the tape - i.e. iterate in reverse
-    while tape.len() > inputs {
-        let deltavar = tape.pop().unwrap();
-        let idx = tape.len();
+    eval_delta(1.0, &dual_trace.dual.tangent, &mut result);
+    // now backpropagate by popping the trace - i.e. iterate in reverse
+    while trace.len() > inputs {
+        let deltavar = trace.pop().unwrap();
+        let idx = trace.len();
         if result[idx] != 0.0 {
-            eval_deltavar(result.pop().unwrap(), &deltavar, &mut result);
+            eval_delta(result.pop().unwrap(), &deltavar, &mut result);
         }
     }
     result
 }
 
-fn f_sharing<'a>(x: &DualTape<'a>, y: &DualTape<'a>, z: &DualTape<'a>) -> DualTape<'a> {
-    let ref r = x * y + z * x;
-    r + r.cos() + r.sin()
+fn f_sharing<'a>(x: &DualTrace<'a>, y: &DualTrace<'a>, z: &DualTrace<'a>) -> DualTrace<'a> {
+    let ref y = x.sin() * y.sin() * z * z; // some big rhs
+    y + y
 }
 
 fn df_sharing(x: f64, y: f64, z: f64) -> Vec<f64> {
-    let tape = Tape::new();
-    let x = &tape.var(x);
-    let y = &tape.var(y);
-    let z = &tape.var(z);
-    let dual_tape = f_sharing(x, y, z);
-    // println!("{dual_tape:?}");
-    eval(3, &dual_tape)
+    let trace = Trace::new();
+    let x = &trace.var(x);
+    let y = &trace.var(y);
+    let z = &trace.var(z);
+    let dual_trace = f_sharing(x, y, z);
+    eval(3, &dual_trace)
+}
+
+fn g<T: VectorSpace>(x: &Dual<T>, y: &Dual<T>) -> Dual<T> {
+    x * y
+}
+
+fn dg_v1(x: f64, y: f64) -> (f64, f64) {
+    (
+        g(&Dual::new(x, 1.0), &Dual::constant(y)).tangent,
+        g(&Dual::constant(x), &Dual::new(y, 1.0)).tangent,
+    )
+}
+
+fn dg_v2(x: f64, y: f64) -> [f64; 2] {
+    g(&Dual::new(x, [1.0, 0.0]), &Dual::new(y, [0.0, 1.0])).tangent
+}
+
+fn dg_v3(x: f64, y: f64) -> Vec<f64> {
+    let dual_delta = g(
+        &Dual::new(x, Rc::new(Delta::Var(0))),
+        &Dual::new(y, Rc::new(Delta::Var(1))),
+    );
+    let mut result = vec![0.0, 0.0];
+    eval_delta(1.0, &dual_delta.tangent, &mut result);
+    result
+}
+
+fn g_sharing_bad<T: VectorSpace>(x: &Dual<T>, y: &Dual<T>) -> Dual<T> {
+    let ref s = x * y;
+    s + s
+}
+
+fn dg_sharing_bad(x: f64, y: f64) -> Vec<f64> {
+    let dual_delta = g_sharing_bad(
+        &Dual::new(x, Rc::new(Delta::Var(0))),
+        &Dual::new(y, Rc::new(Delta::Var(1))),
+    );
+    let mut result = vec![0.0, 0.0];
+    eval_delta(1.0, &dual_delta.tangent, &mut result);
+    result
+}
+
+fn g_sharing_fixed<'a>(x: &DualTrace<'a>, y: &DualTrace<'a>) -> DualTrace<'a> {
+    let ref s = x * y;
+    s + s
+}
+
+fn dg_sharing_fixed(x: f64, y: f64) -> Vec<f64> {
+    let trace = Trace::new();
+    let x = &trace.var(x);
+    let y = &trace.var(y);
+    let dual_trace = g_sharing_fixed(x, y);
+    eval(2, &dual_trace)
 }
 
 fn main() {
@@ -574,6 +543,9 @@ fn main() {
     println!("{res:?}");
 
     let res = f_2out(&Dual::new(10.0, 1.0));
+    println!("{res:?}");
+
+    let res = df_2out(10.0);
     println!("{res:?}");
 
     let res = f_3in(
@@ -592,9 +564,24 @@ fn main() {
     let res = df_3in_v3(10.0, 5.0, 1.0);
     println!("{res:?}");
 
-    let res = df_sharing_bad(10., 5.0, 1.0);
+    let res = df_sharing_bad(1.0, 2.0, 3.0);
     println!("{res:?}");
 
     let res = df_sharing(1.0, 2.0, 3.0);
-    print!("{res:?}");
+    println!("{res:?}");
+
+    let res = dg_v1(3.0, 2.0);
+    println!("{res:?}");
+
+    let res = dg_v2(3.0, 2.0);
+    println!("{res:?}");
+
+    let res = dg_v3(3.0, 2.0);
+    println!("{res:?}");
+
+    let res = dg_sharing_bad(3.0, 2.0);
+    println!("{res:?}");
+
+    let res = dg_sharing_fixed(3.0, 2.0);
+    println!("{res:?}");
 }
