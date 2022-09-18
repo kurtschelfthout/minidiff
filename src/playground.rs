@@ -75,7 +75,7 @@ fn f_ad_dual(t: Dual) -> Dual {
     t.powi(2) + t + Dual::constant(1.0)
 }
 
-pub fn main() {
+pub fn run() {
     let t = 5.0;
     println!("Symbolic: {}", df_sym(t));
 
