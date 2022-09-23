@@ -1,17 +1,24 @@
 use std::ops::{Add, Mul};
 
+// This module introduces the concept of forward mode AD,
+// through overloading dual numbers.
+
+// example function
 fn f(t: f64) -> f64 {
     t.powi(2) + t + 1.0
 }
 
+// symbolically differentiated
 fn df_sym(t: f64) -> f64 {
     2.0 * t + 1.0
 }
 
+// numerically differentiated
 fn df_num(t: f64, h: f64) -> f64 {
     (f(t + h) - f(t)) / h
 }
 
+// "manual" automatic differentiation
 fn f_ad(t: (f64, f64)) -> (f64, f64) {
     let (primalt, tangentt) = t;
     let (primal0, tangent0) = (primalt.powi(2), 2.0 * primalt * tangentt);
@@ -20,6 +27,7 @@ fn f_ad(t: (f64, f64)) -> (f64, f64) {
     (primal2, tangent2)
 }
 
+// automatic differentiation through overloading
 #[derive(Debug, Clone, Copy)]
 struct Dual {
     primal: f64,
